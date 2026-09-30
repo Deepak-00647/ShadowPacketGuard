@@ -17,11 +17,11 @@ body { background: var(--ns-bg); color: var(--ns-text); font-family: "Segoe UI",
 .ns-shell { display: flex; min-height: 100vh; }
 
 .ns-sidebar {
-  width: 300px; flex: 0 0 300px; background: var(--ns-panel); border-right: 1px solid var(--ns-panel-border);
+  width: 320px; flex: 0 0 320px; background: var(--ns-panel); border-right: 1px solid var(--ns-panel-border);
   display: flex; flex-direction: column; padding: 1.25rem 1rem; position: sticky; top: 0; height: 100vh;
 }
 .ns-brand {
-  display: flex; align-items: flex-start; gap: .6rem; min-width: 0; font-size: 1.15rem; font-weight: 700;
+  display: flex; align-items: flex-start; gap: .6rem; min-width: 0; font-size: 1.05rem; font-weight: 700;
   color: var(--ns-accent); margin-bottom: 2rem; line-height: 1.25;
 }
 .ns-brand span {
@@ -62,16 +62,23 @@ body { background: var(--ns-bg); color: var(--ns-text); font-family: "Segoe UI",
 .status-paused { background: rgba(255,183,3,0.15); color: var(--ns-warning); }
 @keyframes pulse { 0%{opacity:1;} 50%{opacity:.55;} 100%{opacity:1;} }
 
-.ns-chart-card { display: flex; flex-direction: column; }
-.ns-chart-wrap { position: relative; width: 100%; min-width: 0; height: 250px; }
+.ns-chart-card { display: flex; flex-direction: column; min-height: 330px; }
+.ns-chart-wrap { position: relative; width: 100%; min-width: 0; height: 270px; flex: 1 1 auto; }
+.ns-chart-card h5 { flex: 0 0 auto; }
+.ns-chart-wrap canvas { min-width: 0; }
 .ns-chart-wrap canvas { display: block !important; width: 100% !important; height: 100% !important; max-width: 100%; }
-.ns-chart-pie { height: 270px; }
-.ns-chart-topips { height: 270px; }
+.ns-chart-pie { height: 290px; }
+.ns-chart-topips { height: 290px; }
 
 .ns-capture-meta { min-width: 0; overflow-wrap: anywhere; text-align: right; }
 
 .ns-table thead th { color: var(--ns-text-dim); font-size: .75rem; text-transform: uppercase; border-color: var(--ns-panel-border); }
-.ns-table td { font-size: .85rem; border-color: var(--ns-panel-border); vertical-align: middle; }
+.ns-table td { font-size: .85rem; border-color: var(--ns-panel-border); vertical-align: middle; white-space: nowrap; }
+.table-responsive { border-radius: 8px; }
+.ns-table thead th { white-space: nowrap; position: sticky; top: 0; z-index: 2; background: #1b2229; }
+.ns-card.ns-controls { overflow: visible; }
+.ns-controls .row { min-width: 0; }
+.ns-controls .form-control, .ns-controls .form-select { min-width: 0; }
 
 .ns-alert-list .alert-row, .ns-mini-list .mini-row {
   display:flex; justify-content:space-between; align-items:center; gap: .75rem; padding:.5rem .25rem;
@@ -104,7 +111,7 @@ body { background: var(--ns-bg); color: var(--ns-text); font-family: "Segoe UI",
 .ns-loader-card .spinner-border { color: var(--ns-accent); }
 
 @media (max-width: 1200px) {
-  .ns-sidebar { width: 260px; flex-basis: 260px; }
+  .ns-sidebar { width: 280px; flex-basis: 280px; }
 }
 @media (max-width: 992px) {
   .ns-main { padding: 1.25rem; }
@@ -118,10 +125,12 @@ body { background: var(--ns-bg); color: var(--ns-text); font-family: "Segoe UI",
   .ns-sidebar-footer { display: none; }
   .ns-brand { margin-bottom: 1rem; }
   .ns-page-header { align-items: flex-start; }
-  .ns-chart-wrap, .ns-chart-pie, .ns-chart-topips { height: 230px; }
+  .ns-chart-card { min-height: 300px; }
+  .ns-chart-wrap, .ns-chart-pie, .ns-chart-topips { height: 240px; }
 }
 @media (max-width: 480px) {
   .ns-main { padding: 1rem; }
   .ns-page-header h1 { font-size: 1.2rem; }
+  .ns-chart-card { min-height: 285px; }
   .ns-chart-wrap, .ns-chart-pie, .ns-chart-topips { height: 220px; }
 }
