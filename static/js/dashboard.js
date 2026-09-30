@@ -2,6 +2,7 @@ let rateChart = null;
 let protoChart = null;
 let topIpChart = null;
 let pollTimer = null;
+let pollInFlight = false;
 
 const SELECTED_INTERFACE_KEY = "shadowpacketguard.selectedInterface";
 
@@ -463,18 +464,41 @@ function humanBytes(n) {
 }
 
 async function pollAll() {
+  if (pollInFlight) return;
+  pollInFlight = true;
   try {
     await Promise.all([refreshStatus(), refreshStats(), refreshAlerts()]);
   } catch (e) {
     console.error("Dashboard refresh failed:", e);
+    const errBox = document.getElementById("capture-error");
+    if (errBox) {
+      errBox.textContent = "Dashboard data refresh failed. Retrying automatically...";
+      errBox.classList.remove("d-none");
+    }
+  } finally {
+    pollInFlight = false;
+    scheduleNextPoll();
   }
+}
+
+function scheduleNextPoll() {
+  window.clearTimeout(pollTimer);
+  if (document.hidden) return;
+  pollTimer = window.setTimeout(pollAll, 1000);
 }
 
 document.addEventListener("DOMContentLoaded", () => {
   restoreInterfaceSelection();
   initCharts();
   pollAll();
-  pollTimer = setInterval(pollAll, 1000);
+
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) {
+      window.clearTimeout(pollTimer);
+      return;
+    }
+    pollAll();
+  });
 
   window.addEventListener("resize", () => {
     if (!rateChart) {
@@ -508,17 +532,29 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   document.getElementById("btn-pause").addEventListener("click", async () => {
-    await nsFetch("/api/capture/pause", { method: "POST" });
-    pollAll();
+    try {
+      await nsFetch("/api/capture/pause", { method: "POST" });
+      await pollAll();
+    } catch (error) {
+      console.error("Failed to pause capture:", error);
+    }
   });
 
   document.getElementById("btn-resume").addEventListener("click", async () => {
-    await nsFetch("/api/capture/resume", { method: "POST" });
-    pollAll();
+    try {
+      await nsFetch("/api/capture/resume", { method: "POST" });
+      await pollAll();
+    } catch (error) {
+      console.error("Failed to resume capture:", error);
+    }
   });
 
   document.getElementById("btn-stop").addEventListener("click", async () => {
-    await nsFetch("/api/capture/stop", { method: "POST" });
-    pollAll();
+    try {
+      await nsFetch("/api/capture/stop", { method: "POST" });
+      await pollAll();
+    } catch (error) {
+      console.error("Failed to stop capture:", error);
+    }
   });
 });
