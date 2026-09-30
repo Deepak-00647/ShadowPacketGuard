@@ -1,7 +1,7 @@
 """
 Aggregate statistics computed from stored packets for a given session.
 """
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import func
 from models import db, Packet
@@ -17,9 +17,10 @@ class StatisticsService:
         total_bytes = base.with_entities(func.sum(Packet.packet_size)).scalar() or 0
 
         # SQLite stores SQLAlchemy DateTime values without timezone metadata.
-        # PacketParser timestamps are UTC, so compare against a naive UTC value
-        # here to keep the live window compatible with the stored representation.
-        window_start = datetime.utcnow() - timedelta(seconds=5)
+        # The application stores UTC, so compare against a naive UTC boundary.
+        window_start = (
+            datetime.now(timezone.utc) - timedelta(seconds=5)
+        ).replace(tzinfo=None)
         recent = base.filter(Packet.timestamp >= window_start)
         recent_count = recent.count()
         recent_bytes = recent.with_entities(func.sum(Packet.packet_size)).scalar() or 0
