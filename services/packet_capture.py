@@ -1,17 +1,11 @@
 """
 Live packet capture engine.
 
-Runs Scapy's sniff() in a background thread so the Flask request/response
-cycle is never blocked. Capture state (running/paused/stopped, packet count)
-is exposed for the dashboard to poll.
-
-NOTE: Raw packet capture requires elevated privileges — on Windows this means
-running VS Code / the terminal "as Administrator" and having Npcap installed;
-on Linux/macOS it typically means running with sudo or granting the Python
-interpreter CAP_NET_RAW.
+Runs Scapy's AsyncSniffer in a background thread so Flask requests are never
+blocked and Stop can terminate an idle capture without waiting for another
+packet to arrive.
 """
 import threading
-import time
 import uuid
 from datetime import datetime, timezone
 
@@ -51,20 +45,21 @@ class PacketCaptureEngine:
 
         self.session = CaptureSession()
         self._thread = None
+        self._sniffer = None
         self._stop_event = threading.Event()
-        self._pause_event = threading.Event()  # set == paused
+        self._pause_event = threading.Event()
+        self._state_lock = threading.RLock()
 
-    # -- public API -------------------------------------------------
     def list_interfaces(self):
         try:
             from scapy.arch.windows import get_windows_if_list
             windows_ifaces = get_windows_if_list()
             if windows_ifaces:
-                names = []
-                for entry in windows_ifaces:
-                    name = entry.get("name")
-                    if name:
-                        names.append(name)
+                names = [
+                    entry.get("name")
+                    for entry in windows_ifaces
+                    if entry.get("name")
+                ]
                 return list(dict.fromkeys(names))
         except Exception:
             pass
@@ -77,54 +72,103 @@ class PacketCaptureEngine:
             return []
 
     def start(self, interface: str):
-        if self.session.status == "running":
-            return False, "Capture already running"
+        interface = str(interface or "").strip()
+        if not interface:
+            return False, "A network interface is required."
 
-        self.session = CaptureSession()
-        self.session.session_id = uuid.uuid4().hex[:16]
-        self.session.interface = interface
-        self.session.status = "running"
-        self.session.started_at = datetime.now(timezone.utc)
-        self._stop_event.clear()
-        self._pause_event.clear()
+        with self._state_lock:
+            if self.session.status in ("running", "paused"):
+                return False, "Capture is already active."
 
-        self._thread = threading.Thread(target=self._run, daemon=True)
-        self._thread.start()
-        self.logger.info("Capture started on %s (session=%s)", interface, self.session.session_id)
+            if self._thread and self._thread.is_alive():
+                return False, "Previous capture is still shutting down. Please try again."
+
+            self.session = CaptureSession()
+            self.session.session_id = uuid.uuid4().hex[:16]
+            self.session.interface = interface
+            self.session.status = "running"
+            self.session.started_at = datetime.now(timezone.utc)
+            self._stop_event.clear()
+            self._pause_event.clear()
+            self._sniffer = None
+
+            self._thread = threading.Thread(
+                target=self._run,
+                name="shadowpacketguard-capture",
+                daemon=True,
+            )
+            self._thread.start()
+
+        self.logger.info(
+            "Capture started on %s (session=%s)",
+            interface,
+            self.session.session_id,
+        )
         return True, self.session.session_id
 
     def pause(self):
-        if self.session.status != "running":
-            return False, "Capture is not running"
-        self._pause_event.set()
-        self.session.status = "paused"
+        with self._state_lock:
+            if self.session.status != "running":
+                return False, "Capture is not running."
+            self._pause_event.set()
+            self.session.status = "paused"
         return True, "Paused"
 
     def resume(self):
-        if self.session.status != "paused":
-            return False, "Capture is not paused"
-        self._pause_event.clear()
-        self.session.status = "running"
+        with self._state_lock:
+            if self.session.status != "paused":
+                return False, "Capture is not paused."
+            self._pause_event.clear()
+            self.session.status = "running"
         return True, "Resumed"
 
     def stop(self):
-        if self.session.status == "stopped":
-            return False, "Capture is not running"
-        self._stop_event.set()
-        self._pause_event.clear()
-        self.session.status = "stopped"
-        self.storage.flush()
-        self.logger.info("Capture stopped (session=%s, packets=%d)",
-                          self.session.session_id, self.session.packet_count)
+        with self._state_lock:
+            if self.session.status == "stopped" and not (
+                self._thread and self._thread.is_alive()
+            ):
+                return False, "Capture is not running."
+
+            self._stop_event.set()
+            self._pause_event.clear()
+            sniffer = self._sniffer
+            thread = self._thread
+
+        # AsyncSniffer.stop() wakes an idle capture immediately. This avoids
+        # the old stop_filter behaviour where Stop could wait indefinitely
+        # until another packet arrived.
+        if sniffer is not None:
+            try:
+                sniffer.stop(join=False)
+            except Exception as exc:
+                self.logger.debug("Sniffer stop warning: %s", exc)
+
+        if thread and thread.is_alive() and thread is not threading.current_thread():
+            thread.join(timeout=3.0)
+
+        with self._state_lock:
+            self.session.status = "stopped"
+
+        try:
+            self.storage.flush()
+        except Exception as exc:
+            self.session.error = f"Database flush failed: {exc}"
+            self.logger.error(self.session.error)
+
+        self.logger.info(
+            "Capture stopped (session=%s, packets=%d)",
+            self.session.session_id,
+            self.session.packet_count,
+        )
         return True, "Stopped"
 
     def status(self):
-        return self.session.to_dict()
+        with self._state_lock:
+            return self.session.to_dict()
 
-    # -- internals ----------------------------------------------------
     def _run(self):
         try:
-            from scapy.all import sniff
+            from scapy.all import AsyncSniffer
         except Exception as exc:
             self.session.status = "stopped"
             self.session.error = f"Scapy unavailable: {exc}"
@@ -134,15 +178,15 @@ class PacketCaptureEngine:
         def _on_packet(pkt):
             if self._stop_event.is_set():
                 return
+
+            # Pausing intentionally stops processing while keeping the
+            # sniffer alive. Resume therefore continues the same session.
             while self._pause_event.is_set() and not self._stop_event.is_set():
-                time.sleep(0.2)
+                self._pause_event.wait(timeout=0.2)
+
             if self._stop_event.is_set():
                 return
 
-            # Capture the application's local observation time at the exact
-            # point the live callback receives the packet. This avoids the
-            # timezone/epoch differences seen with some Windows/Npcap builds.
-            # The parser normalizes this value to UTC before database storage.
             captured_at = datetime.now(timezone.utc)
             record = self.parser.parse(
                 pkt,
@@ -151,23 +195,31 @@ class PacketCaptureEngine:
             )
             if record is None:
                 return
-            stored = self.storage.add(self.session.session_id, record)
-            self.session.packet_count += 1
+
             try:
-                self.threat_detector.process(stored)
+                self.storage.add(self.session.session_id, record)
+                self.session.packet_count += 1
+                self.threat_detector.process(record)
             except Exception as exc:
-                self.logger.error("Threat detection error: %s", exc)
+                self.logger.error("Packet processing error: %s", exc)
 
             if self.session.packet_count >= self.cfg["MAX_PACKETS_PER_SESSION"]:
                 self._stop_event.set()
+                try:
+                    if self._sniffer:
+                        self._sniffer.stop(join=False)
+                except Exception:
+                    pass
 
         try:
-            sniff(
+            sniffer = AsyncSniffer(
                 iface=self.session.interface,
                 prn=_on_packet,
                 store=False,
-                stop_filter=lambda p: self._stop_event.is_set(),
             )
+            self._sniffer = sniffer
+            sniffer.start()
+            sniffer.join()
         except PermissionError:
             self.session.error = (
                 "Permission denied opening the interface. Run VS Code / terminal "
@@ -178,6 +230,10 @@ class PacketCaptureEngine:
             self.session.error = str(exc)
             self.logger.error("Capture error: %s", exc)
         finally:
-            self.storage.flush()
-            if self.session.status != "stopped":
+            try:
+                self.storage.flush()
+            except Exception as exc:
+                self.logger.error("Final packet flush failed: %s", exc)
+            with self._state_lock:
                 self.session.status = "stopped"
+                self._sniffer = None
