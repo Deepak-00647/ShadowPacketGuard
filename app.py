@@ -4,7 +4,7 @@ Application entry point / factory.
 """
 import os
 import click
-from flask import Flask
+from flask import Flask, render_template
 from flask_login import LoginManager
 from flask_wtf import CSRFProtect
 
@@ -42,7 +42,7 @@ def create_app(config_class=DevelopmentConfig):
     csrf.init_app(app)
     login_manager.init_app(app)
 
-    logger = setup_logger("netscope", app.config["LOG_DIR"])
+    logger = setup_logger("shadowpacketguard", app.config["LOG_DIR"])
     app.logger.handlers = logger.handlers
     app.logger.setLevel(logger.level)
 
@@ -97,12 +97,16 @@ def create_app(config_class=DevelopmentConfig):
 
     @app.errorhandler(404)
     def not_found(e):
-        return {"error": "Not found"}, 404
+        if getattr(e, "description", None):
+            message = e.description
+        else:
+            message = "The page you requested could not be found."
+        return render_template("404.html", message=message), 404
 
     @app.errorhandler(500)
     def server_error(e):
-        logger.error("Server error: %s", e)
-        return {"error": "Internal server error"}, 500
+        logger.exception("Unhandled server error")
+        return render_template("500.html"), 500
 
     return app
 
@@ -110,6 +114,7 @@ def create_app(config_class=DevelopmentConfig):
 app = create_app()
 
 if __name__ == "__main__":
-    # host 127.0.0.1 only — this dashboard controls live packet capture and
-    # must not be exposed beyond localhost.
-    app.run(host="127.0.0.1", port=5000, debug=True, use_reloader=False)
+    # Keep capture control local by default. Enable debug explicitly through
+    # the environment when developing; never enable it implicitly.
+    debug = os.environ.get("SHADOWPACKETGUARD_DEBUG", "").lower() in {"1", "true", "yes"}
+    app.run(host="127.0.0.1", port=5000, debug=debug, use_reloader=False, threaded=True)
