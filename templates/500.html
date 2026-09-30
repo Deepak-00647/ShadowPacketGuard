@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Server Error | ShadowPacketGuard</title>
+<link href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.3/css/bootstrap.min.css" rel="stylesheet">
+<link href="{{ url_for('static', filename='css/style.css') }}" rel="stylesheet">
+</head>
+<body>
+<main class="ns-auth-wrap">
+  <section class="ns-auth-card text-center">
+    <div class="display-4 fw-bold mb-2" style="color:var(--ns-danger)">500</div>
+    <h1 class="h4 mb-3">Something went wrong</h1>
+    <p class="text-secondary mb-4">The application encountered an unexpected error. Check the application log for details.</p>
+    <a class="btn btn-outline-light" href="{{ url_for('dashboard.index') }}">Back to Dashboard</a>
+  </section>
+</main>
+</body>
+</html>
